@@ -3,6 +3,7 @@ import sys
 import json
 import logging
 import subprocess
+import re
 from openai import OpenAI
 from github import Github, Auth
 
@@ -28,22 +29,28 @@ def run_semgrep():
 
 def get_featherless_fix(finding):
     prompt = f"""
-    Analyze this security vulnerability.
+    Analyze this security vulnerability flagged by Semgrep.
     Rule: {finding['check_id']}
     File: {finding['path']}
     
     Vulnerable Code:
     {finding['extra'].get('lines', '')}
     
-    Return a JSON object with this exact structure (no markdown fences, just raw JSON):
+    CRITICAL OUTPUT REQUIREMENTS:
+    1. Respond with a single, raw, valid JSON object only.
+    2. Do NOT include markdown fences (no ```json).
+    3. Ensure all internal double quotes and backslashes inside string values are properly escaped.
+    
+    Required JSON schema:
     {{
-        "explanation": "Brief explanation of the risk",
+        "explanation": "Concise 1-sentence risk explanation",
         "risk_level": "CRITICAL, HIGH, MEDIUM, or LOW",
-        "cwe": "Relevant CWE ID (e.g., CWE-89: Improper Neutralization of Special Elements used in an SQL Command)",
-        "owasp": "Relevant OWASP category (e.g., OWASP Top 10 A03:2021-Injection)",
-        "fixed_code": "The secure replacement code"
+        "cwe": "Applicable CWE (e.g. CWE-89: SQL Injection)",
+        "owasp": "Applicable OWASP category (e.g. A03:2021-Injection)",
+        "fixed_code": "Replacement secure code string"
     }}
     """
+    raw_output = ""
     try:
         response = client.chat.completions.create(
             model="Qwen/Qwen2.5-Coder-7B-Instruct",
@@ -52,15 +59,22 @@ def get_featherless_fix(finding):
         )
         raw_output = response.choices[0].message.content.strip()
         
-        if "```json" in raw_output:
-            raw_output = raw_output.split("```json")[1].split("```")[0].strip()
-        elif "```" in raw_output:
-            raw_output = raw_output.split("```")[1].split("```")[0].strip()
+        # Extract outer JSON object across multiline output
+        json_match = re.search(r'\{[\s\S]*\}', raw_output)
+        if json_match:
+            raw_output = json_match.group(0)
             
         return json.loads(raw_output)
     except Exception as e:
-        logger.error(f"Featherless AI Error: {e}")
-        return None
+        logger.error(f"Failed to parse LLM response: {e} | Raw Output: {raw_output}")
+        # Fallback payload to ensure review comments are never dropped
+        return {
+            "explanation": finding['extra'].get('message', 'Security issue detected by Semgrep.'),
+            "risk_level": "HIGH",
+            "cwe": "Security Weakness",
+            "owasp": "Vulnerability",
+            "fixed_code": finding['extra'].get('lines', '')
+        }
 
 def main():
     pr_number = os.environ.get("PR_NUMBER")
@@ -100,7 +114,7 @@ def main():
 
         risk_level = fix.get('risk_level', 'UNKNOWN').upper()
         
-        # Determine if this vulnerability should block the PR from merging
+        # Block PR merge on severe vulnerabilities
         if risk_level in ['HIGH', 'CRITICAL']:
             should_fail_build = True
             severity_icon = "🚨"
@@ -122,7 +136,7 @@ def main():
         })
 
     if review_comments:
-        logger.info("Posting PR review comments...")
+        logger.info(f"Posting {len(review_comments)} PR review comments...")
         pr.create_review(
             commit=repo.get_commit(os.environ["HEAD_SHA"]),
             body="## 🛡️ Secure-by-Design Reviewer found vulnerabilities.",
@@ -130,7 +144,6 @@ def main():
             comments=review_comments
         )
 
-    # Enforce policy gating by failing the runner if HIGH or CRITICAL issues exist
     if should_fail_build:
         logger.error("Workflow failed: CRITICAL or HIGH severity vulnerabilities detected. Blocking merge.")
         sys.exit(1)
