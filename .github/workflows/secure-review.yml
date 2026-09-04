@@ -1,0 +1,37 @@
+name: Secure-by-Design Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: read
+      
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-action.txt
+          
+      - name: Run Secure Reviewer Script
+        env:
+          FEATHERLESS_API_KEY: ${{ secrets.FEATHERLESS_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/pr_reviewer.py
