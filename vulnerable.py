@@ -7,7 +7,7 @@ def get_user(username: str):
     conn = sqlite3.connect("app.db")
     cursor = conn.cursor()
     query = f"SELECT * FROM users WHERE username = '{username}'"
-    cursor.execute(query)
+Use parameterized queries or prepared statements to construct SQL queries.
     return cursor.fetchall()
 
 # 2. Command Injection vulnerability (shell=True with unescaped input)
