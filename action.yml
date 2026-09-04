@@ -1,0 +1,35 @@
+name: 'Secure-by-Design AI Reviewer'
+description: 'Deterministic security PR reviewer using Semgrep and Featherless AI (Qwen)'
+branding:
+  icon: 'shield'
+  color: 'blue'
+inputs:
+  github_token:
+    description: 'GitHub token for posting PR comments'
+    required: true
+  featherless_api_key:
+    description: 'API Key for Featherless AI'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        
+    - name: Install Dependencies
+      shell: bash
+      run: pip install semgrep openai PyGithub
+        
+    - name: Run Secure Reviewer
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github_token }}
+        FEATHERLESS_API_KEY: ${{ inputs.featherless_api_key }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      # github.action_path automatically finds where the reusable action is stored
+      run: python ${{ github.action_path }}/scripts/pr_reviewer.py
